@@ -32,13 +32,14 @@ hive_manager = HiveManager()
 @app.route("/process-csv", methods=["POST"])
 async def process_csv_endpoint(request: Request) -> JSONResponse:
     """
-    Main endpoint to process CSV from S3 and load into Hive
+    Main endpoint to create Hive external table from CSV in S3
     
     Expected JSON payload:
     {
-        "s3_key": "path/to/file.csv",
+        "s3_key": "uploads/6512ecd72353cc2096d991c883aca897/6512ecd72353cc2096d991c883aca897.csv",
         "table_name": "my_table",
-        "drop_if_exists": false  // optional
+        "drop_if_exists": false,  // optional
+        "has_header": true        // optional, defaults to true
     }
     """
     try:
@@ -47,6 +48,7 @@ async def process_csv_endpoint(request: Request) -> JSONResponse:
         s3_key = data.get("s3_key")
         table_name = data.get("table_name")
         drop_if_exists = data.get("drop_if_exists", False)
+        has_header = data.get("has_header", True)
         
         if not s3_key or not table_name:
             return response.json(
@@ -54,46 +56,64 @@ async def process_csv_endpoint(request: Request) -> JSONResponse:
                 status=400
             )
         
-        logger.info(f"Processing CSV: {s3_key} -> {table_name}")
+        logger.info(f"Creating external table for CSV: {s3_key} -> {table_name}")
         
-        # Step 1: Load CSV from S3 with automatic delimiter detection
+        # Step 1: Load CSV from S3 to infer schema (sample only for large files)
         df = await csv_processor.load_csv_from_s3(s3_key)
         
         # Step 2: Infer schema with Pandera
         schema = csv_processor.infer_schema_with_pandera(df)
-        logger.info(f"Schema validation passed for {len(df)} rows")
+        logger.info(f"Schema validation passed - inferred from {len(df)} sample rows")
         
-        # Step 2.5: Test Hive table creation capability
-        logger.info("Testing Hive table creation capability...")
-        test_result = await hive_manager.test_table_creation()
-        if not test_result:
-            logger.error("Hive table creation test failed - there may be configuration issues")
-            return response.json(
-                {"error": "Hive configuration issue - table creation test failed"}, 
-                status=500
-            )
-        logger.info("Hive table creation test passed")
+        # Step 2.5: Test Hive external table creation capability
+        # logger.info("Testing Hive external table creation capability...")
+        # test_result = await hive_manager.test_table_creation()
+        # if not test_result:
+        #     logger.error("Hive external table creation test failed - there may be configuration issues")
+        #     return response.json(
+        #         {"error": "Hive configuration issue - external table creation test failed"}, 
+        #         status=500
+        #     )
+        # logger.info("Hive external table creation test passed")
         
-        # Step 3: Create Hive table dynamically
-        actual_table_name = await hive_manager.create_hive_table(table_name, df, drop_if_exists)
+        # Step 3: Extract file path from s3_key for external table location
+        # Remove file extension to get directory path (for external table LOCATION)
+        file_path = s3_key.replace("uploads/", "")  # Remove uploads prefix if present
+        if file_path.endswith('.csv'):
+            file_path = file_path[:-4]  # Remove .csv extension
         
-        # Step 4: Batch insert to Hive
-        inserted_rows = await hive_manager.batch_insert_to_hive(actual_table_name, df)
+        # Step 4: Create Hive external table pointing to S3 data
+        actual_table_name = await hive_manager.create_hive_external_table(
+            table_name=table_name, 
+            df=df, 
+            file_path=file_path,
+            drop_if_exists=drop_if_exists,
+            has_header=has_header
+        )
+        
+        # # Step 5: Get table info to verify creation and get row count
+        # table_info = await hive_manager.get_table_info(actual_table_name)
+        
+        # Step 6: Optional - Refresh table metadata to ensure S3 data is recognized
+        await hive_manager.refresh_table(actual_table_name)
         
         return response.json({
             "status": "success",
-            "message": f"Successfully processed {s3_key}",
+            "message": f"Successfully created external table for {s3_key}",
             "table_name": actual_table_name,
-            "rows_processed": len(df),
-            "rows_inserted": inserted_rows,
+            "table_type": "external",
+            "s3_location": f"s3a://{config.S3_BUCKET}/uploads/{file_path}/",
             "schema_columns": len(df.columns),
-            "file_size_mb": round(df.estimated_size("mb"), 2)
+            "columns": [{"name": col, "type": str(dtype)} for col, dtype in zip(df.columns, df.dtypes)],
+            # "estimated_rows": table_info.get("row_count", "unknown"),
+            "sample_file_size_mb": round(df.estimated_size("mb"), 2),
+            "has_header": has_header
         })
         
     except Exception as e:
-        logger.error(f"Error processing CSV: {e}")
+        logger.error(f"Error creating external table: {e}")
         return response.json(
-            {"error": f"Processing failed: {str(e)}"}, 
+            {"error": f"External table creation failed: {str(e)}"}, 
             status=500
         )
 

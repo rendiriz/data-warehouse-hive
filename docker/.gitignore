@@ -1,3 +1,5 @@
 hive_postgres_data
 hive_warehouse
 minio_storage_data
+core-site.xml
+lib

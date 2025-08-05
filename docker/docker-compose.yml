@@ -29,6 +29,17 @@ services:
       SERVICE_NAME: metastore
       DB_DRIVER: postgres
       HADOOP_HOME: /opt/hadoop
+      # AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      # AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      # S3_ENDPOINT: ${AWS_URL}
+      # AWS_DEFAULT_REGION: ${S3_BUCKET}
+      # HIVE_CONF_fs_s3a_access_key: ${AWS_ACCESS_KEY_ID}
+      # HIVE_CONF_fs_s3a_secret_key: ${AWS_SECRET_ACCESS_KEY}
+      # HIVE_CONF_fs_s3a_endpoint: ${AWS_URL}
+      # HIVE_CONF_fs_s3a_impl: org.apache.hadoop.fs.s3a.S3AFileSystem
+      # HIVE_CONF_fs_s3a_path_style_access: true
+      # HIVE_CONF_hive_metastore_client_socket_timeout: 60
+      # HIVE_CONF_hive_query_timeout_seconds: 60
       SERVICE_OPTS: >
         -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
         -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres-db:5432/${POSTGRES_DB}
@@ -43,7 +54,12 @@ services:
       - "${HIVE_METASTORE_PORT}:9083"
     volumes:
       - ${HIVE_VOLUME_PATH}:/opt/hive/data/warehouse
+      - ./config/core-site.xml:/opt/hive/conf/core-site.xml
       - ./lib/postgresql-42.5.1.jar:/opt/hive/lib/postgres.jar
+      - ./lib/hadoop-aws-3.4.1.jar:/opt/hive/lib/hadoop-aws-3.4.1.jar
+      - ./lib/bundle-2.32.14.jar:/opt/hive/lib/bundle-2.32.14.jar
+      - ./lib/aws-core-2.32.14.jar:/opt/hive/lib/aws-core-2.32.14.jar
+      - ./lib/s3-2.32.14.jar:/opt/hive/lib/s3-2.32.14.jar
     depends_on:
       - hive-postgres-db
     networks:
@@ -63,6 +79,17 @@ services:
       DB_DRIVER: postgres
       IS_RESUME: true
       HADOOP_HOME: /opt/hadoop
+      # AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      # AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      # S3_ENDPOINT: ${AWS_URL}
+      # AWS_DEFAULT_REGION: ${S3_BUCKET}
+      # HIVE_CONF_fs_s3a_access_key: ${AWS_ACCESS_KEY_ID}
+      # HIVE_CONF_fs_s3a_secret_key: ${AWS_SECRET_ACCESS_KEY}
+      # HIVE_CONF_fs_s3a_endpoint: ${AWS_URL}
+      # HIVE_CONF_fs_s3a_impl: org.apache.hadoop.fs.s3a.S3AFileSystem
+      # HIVE_CONF_fs_s3a_path_style_access: true
+      # HIVE_CONF_hive_metastore_client_socket_timeout: 60
+      # HIVE_CONF_hive_query_timeout_seconds: 60
       SERVICE_OPTS: >-
         -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
         -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres-db:5432/${POSTGRES_DB}
@@ -78,7 +105,12 @@ services:
       - "${HIVE_SERVER_PORT_HTTP}:10002"
     volumes:
       - ${HIVE_VOLUME_PATH}:/opt/hive/data/warehouse
+      - ./config/core-site.xml:/opt/hive/conf/core-site.xml
       - ./lib/postgresql-42.5.1.jar:/opt/hive/lib/postgres.jar
+      - ./lib/hadoop-aws-3.4.1.jar:/opt/hive/lib/hadoop-aws-3.4.1.jar
+      - ./lib/bundle-2.32.14.jar:/opt/hive/lib/bundle-2.32.14.jar
+      - ./lib/aws-core-2.32.14.jar:/opt/hive/lib/aws-core-2.32.14.jar
+      - ./lib/s3-2.32.14.jar:/opt/hive/lib/s3-2.32.14.jar
     depends_on:
       - hive-metastore
     networks:

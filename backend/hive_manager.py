@@ -3,6 +3,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from typing import List, Tuple, Any
+import os
 
 import polars as pl
 from pyhive import hive
@@ -90,6 +91,17 @@ class HiveManager:
             
         return sanitized
     
+    def construct_s3_location(self, file_path: str) -> str:
+        """Construct S3 location from file path or upload ID"""
+        # Remove file extension to get directory path
+        base_path = os.path.splitext(file_path)[0]
+        
+        # Construct S3 location - assumes your tus.io uploads go to 'uploads/' prefix
+        s3_location = f"s3a://{config.S3_BUCKET}/{base_path}"
+        
+        logger.info(f"Constructed S3 location: {s3_location}")
+        return s3_location
+    
     async def table_exists(self, table_name: str) -> bool:
         """Check if table exists in Hive"""
         try:
@@ -106,7 +118,7 @@ class HiveManager:
             return False
     
     async def drop_table(self, table_name: str) -> bool:
-        """Drop table if exists"""
+        """Drop external table if exists (only removes metadata, keeps S3 data)"""
         try:
             # Sanitize table name for Hive compatibility
             sanitized_table_name = self.sanitize_table_name(table_name)
@@ -114,14 +126,15 @@ class HiveManager:
             async with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(f"DROP TABLE IF EXISTS {sanitized_table_name}")
-                logger.info(f"Dropped table: {sanitized_table_name}")
+                logger.info(f"Dropped external table: {sanitized_table_name} (S3 data preserved)")
                 return True
         except Exception as e:
             logger.error(f"Error dropping table: {e}")
             raise
     
-    async def create_hive_table(self, table_name: str, df: pl.DataFrame, drop_if_exists: bool = False) -> str:
-        """Dynamically create Hive table based on DataFrame schema"""
+    async def create_hive_external_table(self, table_name: str, df: pl.DataFrame, file_path: str, 
+                                       drop_if_exists: bool = False, has_header: bool = True) -> str:
+        """Create Hive external table pointing to S3 data"""
         try:
             # Sanitize table name for Hive compatibility
             sanitized_table_name = self.sanitize_table_name(table_name)
@@ -149,21 +162,32 @@ class HiveManager:
                 
                 logger.info(f"Generated columns: {columns}")
                 
-                # Create table DDL with simplest approach - let Hive use defaults
+                # Construct S3 location
+                s3_location = self.construct_s3_location(file_path)
+                
+                # Create external table DDL
                 create_table_sql = f"""
-                CREATE TABLE {sanitized_table_name} (
+                CREATE EXTERNAL TABLE {sanitized_table_name} (
                     {', '.join(columns)}
                 )
+                ROW FORMAT DELIMITED
+                FIELDS TERMINATED BY ','
+                STORED AS TEXTFILE
+                LOCATION '{s3_location}'
                 """
                 
-                logger.info(f"Creating table with SQL: {create_table_sql}")
+                # Add table properties for CSV with header
+                if has_header:
+                    create_table_sql += "\nTBLPROPERTIES ('skip.header.line.count'='1')"
+                
+                logger.info(f"Creating external table with SQL: {create_table_sql}")
                 
                 try:
                     cursor.execute(create_table_sql)
-                    logger.info(f"Successfully created table: {sanitized_table_name}")
+                    logger.info(f"Successfully created external table: {sanitized_table_name}")
                     return sanitized_table_name
                 except Exception as create_error:
-                    logger.error(f"Failed to create table with error: {create_error}")
+                    logger.error(f"Failed to create external table with error: {create_error}")
                     logger.error(f"Error type: {type(create_error)}")
                     logger.error(f"Error args: {create_error.args}")
                     
@@ -172,23 +196,75 @@ class HiveManager:
                     simple_table_name = f"csv_data_{int(time.time())}"
                     
                     simple_create_sql = f"""
-                    CREATE TABLE {simple_table_name} (
+                    CREATE EXTERNAL TABLE {simple_table_name} (
                         {', '.join(columns)}
                     )
+                    ROW FORMAT DELIMITED
+                    FIELDS TERMINATED BY ','
+                    STORED AS TEXTFILE
+                    LOCATION '{s3_location}'
                     """
+                    
+                    if has_header:
+                        simple_create_sql += "\nTBLPROPERTIES ('skip.header.line.count'='1')"
                     
                     try:
                         cursor.execute(simple_create_sql)
-                        logger.info(f"Successfully created table with simple name: {simple_table_name}")
-                        # Update the sanitized name for future use
+                        logger.info(f"Successfully created external table with simple name: {simple_table_name}")
                         return simple_table_name
                     except Exception as simple_error:
                         logger.error(f"Alternative approach also failed: {simple_error}")
                         raise create_error
                 
         except Exception as e:
-            logger.error(f"Error creating Hive table: {e}")
+            logger.error(f"Error creating Hive external table: {e}")
             logger.error(f"Full error details: {str(e)}")
+            raise
+    
+    async def create_hive_table(self, table_name: str, df: pl.DataFrame, file_path: str = None, 
+                              drop_if_exists: bool = False, has_header: bool = True) -> str:
+        """Wrapper method - now defaults to creating external tables"""
+        if file_path:
+            return await self.create_hive_external_table(table_name, df, file_path, drop_if_exists, has_header)
+        else:
+            # Fallback to managed table if no file path provided
+            logger.warning("No file_path provided, creating managed table instead")
+            return await self.create_hive_managed_table(table_name, df, drop_if_exists)
+    
+    async def create_hive_managed_table(self, table_name: str, df: pl.DataFrame, drop_if_exists: bool = False) -> str:
+        """Create managed Hive table (original implementation for fallback)"""
+        try:
+            # Sanitize table name for Hive compatibility
+            sanitized_table_name = self.sanitize_table_name(table_name)
+            logger.info(f"Creating managed table - Original table name: {table_name}, sanitized: {sanitized_table_name}")
+            
+            # Drop table if requested
+            if drop_if_exists:
+                await self.drop_table(sanitized_table_name)
+            
+            async with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Generate column definitions
+                columns = []
+                for col_name, dtype in zip(df.columns, df.dtypes):
+                    hive_type = self.generate_hive_column_type(dtype)
+                    columns.append(f"`{col_name}` {hive_type}")
+                
+                # Create table DDL
+                create_table_sql = f"""
+                CREATE TABLE {sanitized_table_name} (
+                    {', '.join(columns)}
+                )
+                """
+                
+                logger.info(f"Creating managed table with SQL: {create_table_sql}")
+                cursor.execute(create_table_sql)
+                logger.info(f"Successfully created managed table: {sanitized_table_name}")
+                return sanitized_table_name
+                
+        except Exception as e:
+            logger.error(f"Error creating managed Hive table: {e}")
             raise
     
     def prepare_row_for_hive(self, row: List[Any]) -> List[Any]:
@@ -204,7 +280,8 @@ class HiveManager:
         return prepared_row
     
     async def batch_insert_to_hive(self, table_name: str, df: pl.DataFrame) -> int:
-        """Batch insert data to Hive table"""
+        """Batch insert data to Hive table (only works with managed tables)"""
+        logger.warning("Note: batch_insert_to_hive only works with managed tables, not external tables")
         try:
             # Sanitize table name for Hive compatibility
             sanitized_table_name = self.sanitize_table_name(table_name)
@@ -254,34 +331,56 @@ class HiveManager:
             logger.error(f"Error inserting data to Hive: {e}")
             raise
     
-    async def test_table_creation(self) -> bool:
-        """Test if we can create a simple table in Hive"""
+    async def refresh_table(self, table_name: str) -> bool:
+        """Refresh external table metadata (useful after S3 data changes)"""
         try:
-            test_table_name = "test_table_creation"
-            logger.info(f"Testing table creation with name: {test_table_name}")
+            sanitized_table_name = self.sanitize_table_name(table_name)
             
             async with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Try to create a simple test table
+                # Refresh table metadata
+                cursor.execute(f"MSCK REPAIR TABLE {sanitized_table_name}")
+                logger.info(f"Refreshed external table metadata: {sanitized_table_name}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error refreshing table: {e}")
+            return False
+    
+    async def test_table_creation(self) -> bool:
+        """Test if we can create a simple external table in Hive"""
+        try:
+            test_table_name = "test_external_table_creation"
+            logger.info(f"Testing external table creation with name: {test_table_name}")
+            
+            async with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Try to create a simple test external table
+                test_s3_location = f"s3a://{config.S3_BUCKET}/test/"
                 create_test_sql = f"""
-                CREATE TABLE {test_table_name} (
+                CREATE EXTERNAL TABLE {test_table_name} (
                     id INT,
                     name STRING
                 )
+                ROW FORMAT DELIMITED
+                FIELDS TERMINATED BY ','
+                STORED AS TEXTFILE
+                LOCATION '{test_s3_location}'
                 """
                 
-                logger.info(f"Creating test table with SQL: {create_test_sql}")
+                logger.info(f"Creating test external table with SQL: {create_test_sql}")
                 cursor.execute(create_test_sql)
                 
                 # Try to drop it
                 cursor.execute(f"DROP TABLE {test_table_name}")
                 
-                logger.info("Test table creation successful")
+                logger.info("Test external table creation successful")
                 return True
                 
         except Exception as e:
-            logger.error(f"Test table creation failed: {e}")
+            logger.error(f"Test external table creation failed: {e}")
             return False
 
     async def get_table_info(self, table_name: str) -> dict:
@@ -297,14 +396,22 @@ class HiveManager:
                 cursor.execute(f"DESCRIBE {sanitized_table_name}")
                 columns = cursor.fetchall()
                 
-                # Get row count
+                # Get row count (may be slow for large external tables)
                 cursor.execute(f"SELECT COUNT(*) FROM {sanitized_table_name}")
                 row_count = cursor.fetchone()[0]
                 
+                # Check if it's an external table
+                cursor.execute(f"DESCRIBE FORMATTED {sanitized_table_name}")
+                table_details = cursor.fetchall()
+                
+                is_external = any("EXTERNAL" in str(detail).upper() for detail in table_details)
+                
                 return {
                     "table_name": table_name,
+                    "sanitized_name": sanitized_table_name,
                     "columns": [{"name": col[0], "type": col[1]} for col in columns],
-                    "row_count": row_count
+                    "row_count": row_count,
+                    "is_external": is_external
                 }
                 
         except Exception as e:
