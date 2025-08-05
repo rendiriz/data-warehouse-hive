@@ -1,0 +1,111 @@
+version: "3.8"
+
+services:
+  hive-postgres-db:
+    image: postgres:17.2-bookworm
+    container_name: ${PROJECT_NAME}-hive-postgres-db
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - ${POSTGRES_VOLUME_PATH}:/var/lib/postgresql/data
+    networks:
+      - data-warehouse-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hive-metastore:
+    image: apache/hive:4.1.0
+    container_name: ${PROJECT_NAME}-hive-metastore
+    restart: on-failure
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres-db:5432/${POSTGRES_DB}
+        -Djavax.jdo.option.ConnectionUserName=${POSTGRES_USER}
+        -Djavax.jdo.option.ConnectionPassword=${POSTGRES_PASSWORD}
+        -Ddatanucleus.schema.autoCreateAll=true
+        -Ddatanucleus.schema.validateTables=false
+        -Ddatanucleus.schema.validateConstraints=false
+        -Ddatanucleus.schema.validateColumns=false
+    ports:
+      - "${HIVE_METASTORE_PORT}:9083"
+    volumes:
+      - ${HIVE_VOLUME_PATH}:/opt/hive/data/warehouse
+      - ./lib/postgresql-42.5.1.jar:/opt/hive/lib/postgres.jar
+    depends_on:
+      - hive-postgres-db
+    networks:
+      - data-warehouse-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "nc -z localhost 9083"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hive-server:
+    image: apache/hive:4.1.0
+    container_name: ${PROJECT_NAME}-hive-server
+    restart: on-failure
+    environment:
+      SERVICE_NAME: hiveserver2
+      DB_DRIVER: postgres
+      IS_RESUME: true
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres-db:5432/${POSTGRES_DB}
+        -Djavax.jdo.option.ConnectionUserName=${POSTGRES_USER}
+        -Djavax.jdo.option.ConnectionPassword=${POSTGRES_PASSWORD}
+        -Dhive.metastore.uris=thrift://hive-metastore:9083
+        -Dhive.server2.thrift.bind.host=0.0.0.0
+        -Dhive.server2.webui.host=0.0.0.0
+        -Dhive.server2.webui.port=10002
+    ports:
+      - "${HIVE_SERVER_PORT_THRIFT}:10000"
+      - "${HIVE_SERVER_PORT_HTTP}:10002"
+    volumes:
+      - ${HIVE_VOLUME_PATH}:/opt/hive/data/warehouse
+      - ./lib/postgresql-42.5.1.jar:/opt/hive/lib/postgres.jar
+    depends_on:
+      - hive-metastore
+    networks:
+      - data-warehouse-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "nc -z localhost 10000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-storage:
+    image: minio/minio:latest
+    container_name: ${PROJECT_NAME}-minio-storage
+    restart: on-failure
+    ports:
+      - ${MINIO_PORT_API}:9000
+      - ${MINIO_PORT_CONSOLE}:9001
+    volumes:
+      - ${MINIO_VOLUME_PATH}:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    command: server /data --console-address ":9001"
+    networks:
+      - data-warehouse-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+networks:
+  data-warehouse-network:
+    name: data-warehouse-network
