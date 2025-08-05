@@ -32,6 +32,19 @@ const server = new Server({
       throw { status_code: 413, body: `CSV file too large. Max size is ${MAX_CSV_SIZE / (1024 * 1024)}MB.` };
     }
 
+    // Store the original filename for later use
+    const originalFilename = upload.metadata?.filename || "unknown";
+    const fileExtension = originalFilename.split(".").pop() || "csv";
+    const keyWithExtension = `${upload.id}.${fileExtension}`;
+
+    console.log(`Generated key with extension: ${keyWithExtension} from filename: ${originalFilename}`);
+
+    // Add the generated key to metadata for use in onUploadFinish
+    upload.metadata = {
+      ...upload.metadata,
+      generated_key: keyWithExtension,
+    };
+
     return { metadata: upload.metadata };
   },
   // Add custom error handler
@@ -42,19 +55,26 @@ const server = new Server({
     try {
       console.log("Starting CSV processing for file:", upload.id);
 
+      // Use the generated key with extension from metadata
+      const keyWithExtension = upload.metadata?.generated_key || upload.id;
+
+      console.log("Using key with extension:", keyWithExtension);
+
       // The rest of the code will never be reached
       // Create an AbortController for timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
       const requestBody = JSON.stringify({
-        s3_key: upload.id,
-        table_name: upload.id,
+        s3_key: keyWithExtension,
+        table_name: upload.id, // Keep table name without extension for Hive compatibility
       });
+
+      console.log("Request body for CSV processing:", requestBody);
 
       console.log("Sending request to process-csv with body:", requestBody);
 
-      const processingResponse = await fetch("http://localhost:3000/process-csv", {
+      const processingResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/process-csv`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / compiled files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# Editor/IDE specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs and databases
+*.log
+*.sqlite3
+db.sqlite3
+
+# Configuration files
+# Sensitive information like API keys or database credentials should not be committed
+# Create a .env file or similar for local configuration and add it to .gitignore
+.env
+config.ini
+settings.pyc # If you have a settings.py that gets compiled
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Sanic specific
+# If Sanic creates any specific temporary files or build artifacts, add them here.
+# For example, if you're using a specific Sanic extension that creates temporary files.
+# No standard Sanic-specific additions are typically needed beyond general Python exclusions.
+
+uv.lock

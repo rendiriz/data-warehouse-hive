@@ -28,6 +28,7 @@ services:
     environment:
       SERVICE_NAME: metastore
       DB_DRIVER: postgres
+      HADOOP_HOME: /opt/hadoop
       SERVICE_OPTS: >
         -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
         -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres-db:5432/${POSTGRES_DB}
@@ -37,6 +38,7 @@ services:
         -Ddatanucleus.schema.validateTables=false
         -Ddatanucleus.schema.validateConstraints=false
         -Ddatanucleus.schema.validateColumns=false
+        -Dhive.metastore.warehouse.dir=/opt/hive/data/warehouse
     ports:
       - "${HIVE_METASTORE_PORT}:9083"
     volumes:
@@ -60,6 +62,7 @@ services:
       SERVICE_NAME: hiveserver2
       DB_DRIVER: postgres
       IS_RESUME: true
+      HADOOP_HOME: /opt/hadoop
       SERVICE_OPTS: >-
         -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
         -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-postgres-db:5432/${POSTGRES_DB}
@@ -69,6 +72,7 @@ services:
         -Dhive.server2.thrift.bind.host=0.0.0.0
         -Dhive.server2.webui.host=0.0.0.0
         -Dhive.server2.webui.port=10002
+        -Dhive.metastore.warehouse.dir=/opt/hive/data/warehouse
     ports:
       - "${HIVE_SERVER_PORT_THRIFT}:10000"
       - "${HIVE_SERVER_PORT_HTTP}:10002"

@@ -17,48 +17,6 @@ export default function Home() {
     setUploadStatus("");
   };
 
-  const checkProcessingStatus = async (uploadUrl: string) => {
-    try {
-      // Extract upload ID from the URL
-      const parts = uploadUrl.split("/");
-      const uploadId = parts[parts.length - 1];
-      if (!uploadId) {
-        setUploadStatus("Error: Could not determine upload ID");
-        return;
-      }
-
-      console.log("Checking processing status for upload:", uploadId);
-
-      // Check status after a short delay to allow processing to complete
-      setTimeout(async () => {
-        try {
-          const response = await fetch(`/api/upload-status/${uploadId}`);
-          const statusData = await response.json();
-
-          console.log("Processing status:", statusData);
-
-          if (statusData.status === "error") {
-            setUploadStatus(`Error: ${statusData.error}`);
-            setUploadProgress(0);
-          } else if (statusData.status === "success") {
-            setUploadStatus("Upload and CSV processing completed successfully!");
-            setUploadProgress(100);
-          } else {
-            setUploadStatus("Upload completed, but processing status is unknown");
-            setUploadProgress(100);
-          }
-        } catch (error) {
-          console.error("Error checking processing status:", error);
-          setUploadStatus("Upload completed, but could not verify processing status");
-          setUploadProgress(100);
-        }
-      }, 2000); // Wait 2 seconds before checking
-    } catch (error) {
-      console.error("Error in checkProcessingStatus:", error);
-      setUploadStatus("Error checking processing status");
-    }
-  };
-
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (!event.target.files || event.target.files.length === 0) {
       alert("Please select a file first.");
@@ -72,13 +30,15 @@ export default function Home() {
 
     const uploadUrl = `${process.env.NEXT_PUBLIC_SERVER_URL}/api/upload/`;
 
+    const metadata = {
+      filename: file.name,
+      filetype: file.type,
+    };
+
     const upload = new tus.Upload(file, {
       endpoint: uploadUrl,
       retryDelays: [0, 3000, 5000, 10000],
-      metadata: {
-        filename: file.name,
-        filetype: file.type,
-      },
+      metadata,
       headers: {}, // Add any custom headers if needed
       onError: function (error) {
         console.error("Upload failed:", error);
@@ -116,12 +76,7 @@ export default function Home() {
         console.log("Upload completed:", payload);
         console.log("Upload URL:", upload.url);
 
-        // Check the processing status after upload completes
-        if (upload.url) {
-          checkProcessingStatus(upload.url);
-        } else {
-          setUploadStatus("Upload completed, but could not determine upload URL");
-        }
+        setUploadStatus("Upload and CSV processing completed successfully!");
       },
       onChunkComplete: function (chunkSize, bytesAccepted, bytesTotal) {
         console.log(`Chunk complete: ${chunkSize} bytes accepted, ${bytesAccepted}/${bytesTotal} total`);
@@ -173,9 +128,9 @@ export default function Home() {
             </div>
           )}
 
-          {(uploadStatus.startsWith("Error:") || uploadStatus.includes("successfully")) && (
-            <Button onClick={resetUpload}>Upload Another File</Button>
-          )}
+          <Button className="mt-2" onClick={resetUpload}>
+            Upload Another File
+          </Button>
         </>
       )}
     </div>
